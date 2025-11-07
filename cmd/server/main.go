@@ -16,25 +16,35 @@ import (
 )
 
 const httpPort = ":3000"
+const city = "moscow"
+
+type Reading struct {
+	Timestamp   time.Time `json:"timestamp"`
+	Temperature float64   `json:"temperature"`
+}
+type Storage struct {
+	data map[string][]Reading
+	mu   sync.RWMutex
+}
 
 func main() {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
-	httpClient := &http.Client{Timeout: time.Second * 10}
-	geocodingClient := geocoding.NewClient(httpClient)
-	openMeteoClient := open_meteo.NewClient(httpClient)
+	storage := &Storage{data: make(map[string][]Reading)}
 	r.Get("/{city}", func(w http.ResponseWriter, r *http.Request) {
-		city := chi.URLParam(r, "city")
-		fmt.Fprintf(w, "Hello, %s\n!", city)
-		geores, err := geocodingClient.GetCoords(city)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(err.Error()))
+		cityName := chi.URLParam(r, "city")
+		fmt.Fprintf(w, "Hello, %s\n!", cityName)
+
+		storage.mu.RLock()
+		defer storage.mu.RUnlock()
+		reading, ok := storage.data[cityName]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte("Not Found"))
 			return
 		}
 
-		openMetRes, err := openMeteoClient.GetTemperature(geores.Latitude, geores.Longitude)
-		raw, err := json.Marshal(openMetRes)
+		raw, err := json.Marshal(reading)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(err.Error()))
@@ -50,7 +60,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	jobs, err := initJobs(s)
+	jobs, err := initJobs(s, storage)
 	if err != nil {
 		panic(err)
 	}
@@ -76,8 +86,11 @@ func main() {
 
 }
 
-func initJobs(scheduler gocron.Scheduler) ([]gocron.Job, error) {
+func initJobs(scheduler gocron.Scheduler, storage *Storage) ([]gocron.Job, error) {
 	// create a scheduler
+	httpClient := &http.Client{Timeout: time.Second * 10}
+	geocodingClient := geocoding.NewClient(httpClient)
+	openMeteoClient := open_meteo.NewClient(httpClient)
 
 	j, err := scheduler.NewJob(
 		gocron.DurationJob(
@@ -85,7 +98,29 @@ func initJobs(scheduler gocron.Scheduler) ([]gocron.Job, error) {
 		),
 		gocron.NewTask(
 			func() {
-				fmt.Println("hello world")
+				geores, err := geocodingClient.GetCoords(city)
+				if err != nil {
+					log.Println(err)
+					return
+				}
+
+				openMetRes, err := openMeteoClient.GetTemperature(geores.Latitude, geores.Longitude)
+				if err != nil {
+					log.Println(err)
+					return
+				}
+				storage.mu.Lock()
+				defer storage.mu.Unlock()
+				timestamp, err := time.Parse("2006-01-02T15:04", openMetRes.Current.Time)
+				if err != nil {
+					log.Println(err)
+					return
+				}
+				storage.data[city] = append(storage.data[city], Reading{
+					Timestamp:   timestamp,
+					Temperature: openMetRes.Current.Temperature2m,
+				})
+				fmt.Printf("%vupdated data fo city  %s\n", time.Now(), city)
 			},
 		),
 	)
