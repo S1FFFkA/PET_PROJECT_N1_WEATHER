@@ -25,7 +25,7 @@ func NewClient(httpClient *http.Client) *client {
 
 func (c *client) GetTemperature(lat, long float64) (Response, error) {
 	res, err := c.httpClient.Get(
-		fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%f&longitude=%f&current=temperature_2m",
+		fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%f&longitude=%f&current=temperature_2m&language=ru",
 			lat,
 			long,
 		),
